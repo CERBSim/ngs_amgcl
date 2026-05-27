@@ -1,0 +1,3 @@
+[submodule "extern/amgcl"]
+	path = extern/amgcl
+	url = git@github.com:ddemidov/amgcl.git
