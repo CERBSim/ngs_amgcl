@@ -43,15 +43,14 @@ else()
   target_compile_definitions(${addon_name} PRIVATE AMGCL_NO_BOOST)
 endif()
 
-# Find OpenMP - only needed for AMGCL builtin backend
-if(NOT USE_NGSOLVE_BACKEND)
-  find_package(OpenMP)
-  if(OpenMP_CXX_FOUND)
-    target_link_libraries(${addon_name} PRIVATE OpenMP::OpenMP_CXX)
-    message(STATUS "OpenMP found")
-  else()
-    message(STATUS "OpenMP not found - builtin backend will run single-threaded")
-  endif()
+# OpenMP is used by AMGCL internally for the setup phase (coarsening, SpGEMM)
+# regardless of which backend is used for the solve phase
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+  target_link_libraries(${addon_name} PRIVATE OpenMP::OpenMP_CXX)
+  message(STATUS "OpenMP found - parallel AMG setup")
+else()
+  message(STATUS "OpenMP not found - AMG setup will run serially")
 endif()
 
 # Install the module

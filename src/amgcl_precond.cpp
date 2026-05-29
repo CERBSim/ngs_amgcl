@@ -19,9 +19,11 @@ namespace ngsamgcl {
 #if USE_NGSOLVE_BACKEND
   using Backend = amgcl::backend::ngsolve_backend;
   using VecType = NgsVector;
+  inline void vec_zero(VecType & v) { v.GetBaseVector() = 0.0; }
 #else
   using Backend = amgcl::backend::builtin<double>;
   using VecType = std::vector<double>;
+  inline void vec_zero(VecType & v) { std::fill(v.begin(), v.end(), 0.0); }
 #endif
 
   // Base class for type-erased AMG
@@ -45,6 +47,8 @@ namespace ngsamgcl {
       prm.coarse_enough = opts.coarse_enough;
       prm.direct_coarse = opts.direct_coarse;
 
+      // Suspend TaskManager during setup so OpenMP gets all cores
+      ngcore::SuspendTaskManager suspend;
       amg = std::make_unique<AMG>(A, prm);
 
       if (opts.printinfo)
@@ -200,7 +204,7 @@ namespace ngsamgcl {
     });
 
     // Zero solution
-    sol.GetBaseVector() = 0.0;
+    vec_zero(sol);
 
     // Apply AMG cycle
     impl->amg->apply(rhs, sol);

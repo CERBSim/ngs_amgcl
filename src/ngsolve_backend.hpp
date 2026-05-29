@@ -141,28 +141,30 @@ struct NgsDirectSolver {
 struct NgsVector {
   typedef double value_type;
   shared_ptr<VVector<double>> vec;
+  double * ptr = nullptr;
+  size_t n = 0;
 
   NgsVector() = default;
-  explicit NgsVector(size_t n, double val = 0.0)
-    : vec(make_shared<VVector<double>>(n)) {
-    *vec = val;
+  explicit NgsVector(size_t n_, double val = 0.0)
+    : vec(make_shared<VVector<double>>(n_)), n(n_) {
+    ptr = vec->FVDouble().Data();
+    for (size_t i = 0; i < n; ++i) ptr[i] = val;
   }
   NgsVector(const std::vector<double> & v)
-    : vec(make_shared<VVector<double>>(v.size())) {
-    auto fv = vec->FVDouble();
-    for (size_t i = 0; i < v.size(); ++i)
-      fv[i] = v[i];
+    : vec(make_shared<VVector<double>>(v.size())), n(v.size()) {
+    ptr = vec->FVDouble().Data();
+    for (size_t i = 0; i < n; ++i) ptr[i] = v[i];
   }
 
-  size_t size() const { return vec ? vec->Size() : 0; }
+  size_t size() const { return n; }
 
-  double & operator[](size_t i) { return vec->FVDouble()[i]; }
-  const double & operator[](size_t i) const { return vec->FVDouble()[i]; }
+  double & operator[](size_t i) { return ptr[i]; }
+  const double & operator[](size_t i) const { return ptr[i]; }
 
-  double * begin() { return vec->FVDouble().Data(); }
-  const double * begin() const { return vec->FVDouble().Data(); }
+  double * begin() { return ptr; }
+  const double * begin() const { return ptr; }
 
-  size_t bytes() const { return size() * sizeof(double); }
+  size_t bytes() const { return n * sizeof(double); }
 
   BaseVector & GetBaseVector() { return *vec; }
   const BaseVector & GetBaseVector() const { return *vec; }
