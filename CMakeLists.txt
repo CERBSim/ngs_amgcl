@@ -17,6 +17,20 @@ add_ngsolve_addon(${addon_name}
 
 target_include_directories(${addon_name} PRIVATE ${CMAKE_SOURCE_DIR}/extern/amgcl)
 
+# Boost is optional - amgcl uses it for property_tree parameter passing,
+# but we only use struct-based params so it's not needed.
+option(USE_BOOST "Use Boost for amgcl (optional, not required)" ON)
+if(USE_BOOST)
+  find_package(Boost QUIET)
+endif()
+if(Boost_FOUND)
+  message(STATUS "Boost found - using Boost-enabled amgcl")
+  target_link_libraries(${addon_name} PRIVATE Boost::boost)
+else()
+  message(STATUS "Building amgcl without Boost (AMGCL_NO_BOOST)")
+  target_compile_definitions(${addon_name} PRIVATE AMGCL_NO_BOOST)
+endif()
+
 # Find OpenMP - amgcl can use OpenMP for shared memory parallelism
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
