@@ -1,4 +1,5 @@
 #include "amgcl_precond.hpp"
+#include "ngsolve_backend.hpp"
 
 // AMGCL headers
 #include <amgcl/backend/builtin.hpp>
@@ -15,18 +16,20 @@
 #include <amgcl/solver/preonly.hpp>
 #include <amgcl/adapter/crs_tuple.hpp>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
 namespace ngsamgcl {
 
+#if USE_NGSOLVE_BACKEND
+  using Backend = amgcl::backend::ngsolve_backend;
+  using VecType = NgsVector;
+#else
   using Backend = amgcl::backend::builtin<double>;
+  using VecType = std::vector<double>;
+#endif
 
   // Base class for type-erased AMG
   struct AMGBase {
     virtual ~AMGBase() = default;
-    virtual void apply(const std::vector<double> & rhs, std::vector<double> & x) const = 0;
+    virtual void apply(const VecType & rhs, VecType & x) const = 0;
   };
 
   // Template implementation for specific coarsening/relaxation combination
@@ -55,7 +58,7 @@ namespace ngsamgcl {
         std::cout << *amg << std::endl;
     }
 
-    void apply(const std::vector<double> & rhs, std::vector<double> & x) const override {
+    void apply(const VecType & rhs, VecType & x) const override {
       amg->cycle(rhs, x);
     }
   };
@@ -69,6 +72,9 @@ namespace ngsamgcl {
     std::vector<int> ptr, col;
     std::vector<double> val;
     size_t n;
+    // Cached work vectors to avoid allocation per Mult() call
+    mutable VecType rhs;
+    mutable VecType sol;
   };
 
   AMGCLMatrix::AMGCLMatrix(shared_ptr<BaseSparseMatrix> mat,
@@ -194,6 +200,10 @@ namespace ngsamgcl {
       throw Exception("AMGCLMatrix: unsupported coarsening/relaxation combination: "
                       + opts.coarsening + "/" + opts.relaxation);
     }
+
+    // Pre-allocate work vectors
+    impl->rhs = VecType(n_free, 0.0);
+    impl->sol = VecType(n_free, 0.0);
   }
 
   AMGCLMatrix::~AMGCLMatrix() = default;
@@ -204,26 +214,28 @@ namespace ngsamgcl {
 
     size_t ndof = height_;
 
-    // Extract RHS for free DOFs
-    std::vector<double> rhs(n_free, 0.0);
-    std::vector<double> sol(n_free, 0.0);
+    // Use cached work vectors (avoid allocation per call)
+    auto & rhs = impl->rhs;
+    auto & sol = impl->sol;
 
-    for (size_t i = 0; i < ndof; i++) {
-      if (dof_map[i] >= 0) {
+    // Gather free DOFs (parallel)
+    ngcore::ParallelFor(ndof, [&](size_t i) {
+      if (dof_map[i] >= 0)
         rhs[dof_map[i]] = fx(i);
-      }
-    }
+    });
+
+    // Zero solution
+    sol.GetBaseVector() = 0.0;
 
     // Apply AMG cycle
     impl->amg->apply(rhs, sol);
 
-    // Scatter result back
+    // Scatter result back (parallel)
     fy = 0.0;
-    for (size_t i = 0; i < ndof; i++) {
-      if (dof_map[i] >= 0) {
+    ngcore::ParallelFor(ndof, [&](size_t i) {
+      if (dof_map[i] >= 0)
         fy(i) = sol[dof_map[i]];
-      }
-    }
+    });
   }
 
   AutoVector AMGCLMatrix::CreateRowVector() const {

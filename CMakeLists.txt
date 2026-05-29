@@ -17,10 +17,22 @@ add_ngsolve_addon(${addon_name}
 
 target_include_directories(${addon_name} PRIVATE ${CMAKE_SOURCE_DIR}/extern/amgcl)
 
+# Backend selection: use NGSolve's SparseMatrix/BaseVector (TaskManager parallel)
+# or AMGCL's builtin backend (OpenMP parallel)
+option(USE_NGSOLVE_BACKEND "Use NGSolve backend (TaskManager) instead of builtin (OpenMP)" ON)
+if(USE_NGSOLVE_BACKEND)
+  target_compile_definitions(${addon_name} PRIVATE USE_NGSOLVE_BACKEND=1)
+  message(STATUS "Using NGSolve backend (TaskManager parallelism)")
+else()
+  target_compile_definitions(${addon_name} PRIVATE USE_NGSOLVE_BACKEND=0)
+  message(STATUS "Using AMGCL builtin backend (OpenMP parallelism)")
+endif()
+
 # Boost is optional - amgcl uses it for property_tree parameter passing,
 # but we only use struct-based params so it's not needed.
 option(USE_BOOST "Use Boost for amgcl (optional, not required)" ON)
 if(USE_BOOST)
+  cmake_policy(SET CMP0167 OLD)
   find_package(Boost QUIET)
 endif()
 if(Boost_FOUND)
@@ -31,13 +43,15 @@ else()
   target_compile_definitions(${addon_name} PRIVATE AMGCL_NO_BOOST)
 endif()
 
-# Find OpenMP - amgcl can use OpenMP for shared memory parallelism
-find_package(OpenMP)
-if(OpenMP_CXX_FOUND)
-  target_link_libraries(${addon_name} PRIVATE OpenMP::OpenMP_CXX)
-  message(STATUS "OpenMP found - enabling shared memory parallelism for amgcl")
-else()
-  message(STATUS "OpenMP not found - amgcl will run without shared memory parallelism")
+# Find OpenMP - only needed for AMGCL builtin backend
+if(NOT USE_NGSOLVE_BACKEND)
+  find_package(OpenMP)
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(${addon_name} PRIVATE OpenMP::OpenMP_CXX)
+    message(STATUS "OpenMP found")
+  else()
+    message(STATUS "OpenMP not found - builtin backend will run single-threaded")
+  endif()
 endif()
 
 # Install the module

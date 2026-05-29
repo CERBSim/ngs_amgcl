@@ -30,6 +30,8 @@ namespace ngsamgcl {
     int coarse_enough = 2000;
     // Direct solver on coarsest level
     bool direct_coarse = true;
+    // Coarse solver type: "sparsecholesky", "pardiso", "umfpack", "skyline_lu"
+    std::string coarse_solver = "sparsecholesky";
     // Print AMG hierarchy info during setup
     bool printinfo = false;
   };
