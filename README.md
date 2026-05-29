@@ -15,22 +15,22 @@ An NGSolve addon providing algebraic multigrid preconditioning via [AMGCL](https
 ### Quick install
 
 ```bash
-pip install git+https://github.com/your-org/ngsolve-amgcl.git
+pip install git+https://github.com/cerbsim/ngs_amgcl.git
 ```
 
 ### Step-by-step (for self-compiled NGSolve)
 
 ```bash
-git clone --recursive https://github.com/your-org/ngsolve-amgcl.git
-cd ngsolve-amgcl
+git clone --recursive https://github.com/cerbsim/ngs_amgcl.git
+cd ngs_amgcl
 pip install --no-build-isolation .
 ```
 
 ### Manual CMake build
 
 ```bash
-git clone --recursive https://github.com/your-org/ngsolve-amgcl.git
-cd ngsolve-amgcl
+git clone --recursive https://github.com/cerbsim/ngs_amgcl.git
+cd ngs_amgcl
 mkdir build && cd build
 cmake ..
 make -j4 install
