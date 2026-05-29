@@ -115,7 +115,6 @@ struct NgsMatrix {
 // ============================================================
 struct NgsDirectSolver {
   shared_ptr<BaseMatrix> inv;
-  shared_ptr<VVector<double>> tmp_rhs, tmp_sol;
 
   // AMGCL queries this to decide default coarse_enough
   static size_t coarse_enough() { return 3000; }
@@ -124,23 +123,13 @@ struct NgsDirectSolver {
     auto freedofs = make_shared<BitArray>(A.ngs_mat->Height());
     freedofs->Set();
     inv = A.ngs_mat->InverseMatrix(freedofs);
-    tmp_rhs = make_shared<VVector<double>>(A.ngs_mat->Height());
-    tmp_sol = make_shared<VVector<double>>(A.ngs_mat->Height());
   }
 
   // AMGCL calls operator()(rhs, x) to solve A*x = rhs
   template <class Vec1, class Vec2>
   void operator()(const Vec1 & rhs, Vec2 & x) const {
-    size_t n = tmp_rhs->Size();
-    auto fv_rhs = tmp_rhs->FVDouble();
-    for (size_t i = 0; i < n; ++i)
-      fv_rhs[i] = rhs[i];
-
-    inv->Mult(*tmp_rhs, *tmp_sol);
-
-    auto fv_sol = tmp_sol->FVDouble();
-    for (size_t i = 0; i < n; ++i)
-      x[i] = fv_sol[i];
+    // NgsVector wraps VVector<double> which IS a BaseVector — pass directly
+    inv->Mult(rhs.GetBaseVector(), x.GetBaseVector());
   }
 };
 

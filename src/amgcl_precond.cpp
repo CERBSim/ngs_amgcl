@@ -13,8 +13,6 @@
 #include <amgcl/relaxation/ilu0.hpp>
 #include <amgcl/relaxation/damped_jacobi.hpp>
 #include <amgcl/relaxation/chebyshev.hpp>
-#include <amgcl/solver/preonly.hpp>
-#include <amgcl/adapter/crs_tuple.hpp>
 
 namespace ngsamgcl {
 
@@ -38,11 +36,7 @@ namespace ngsamgcl {
     using AMG = amgcl::amg<Backend, Coarsening, Relaxation>;
     std::unique_ptr<AMG> amg;
 
-    AMGImpl(size_t n,
-            const std::vector<int> & ptr,
-            const std::vector<int> & col,
-            const std::vector<double> & val,
-            const AMGCLOptions & opts)
+    AMGImpl(const NgsMatrix & A, const AMGCLOptions & opts)
     {
       typename AMG::params prm;
       prm.npre = opts.npre;
@@ -51,7 +45,6 @@ namespace ngsamgcl {
       prm.coarse_enough = opts.coarse_enough;
       prm.direct_coarse = opts.direct_coarse;
 
-      auto A = std::tie(n, ptr, col, val);
       amg = std::make_unique<AMG>(A, prm);
 
       if (opts.printinfo)
@@ -69,9 +62,6 @@ namespace ngsamgcl {
 
   struct AMGCLMatrix::Impl {
     std::unique_ptr<AMGBase> amg;
-    std::vector<int> ptr, col;
-    std::vector<double> val;
-    size_t n;
     // Cached work vectors to avoid allocation per Mult() call
     mutable VecType rhs;
     mutable VecType sol;
@@ -98,103 +88,88 @@ namespace ngsamgcl {
       }
     }
 
-    impl->n = n_free;
-    impl->ptr.resize(n_free + 1, 0);
-
     // Dynamic cast to SparseMatrix<double>
     auto spm = dynamic_pointer_cast<SparseMatrix<double>>(mat);
     if (!spm) {
       throw Exception("AMGCLMatrix: matrix must be SparseMatrix<double>");
     }
 
-    // First pass: count non-zeros per row (only free-free entries)
+    // Build the reduced (free-DOFs-only) matrix directly as NGSolve SparseMatrix
+    Array<int> els_per_row(n_free);
+    for (size_t i = 0; i < ndof; i++) {
+      if (dof_map[i] < 0) continue;
+      int cnt = 0;
+      auto cols = spm->GetRowIndices(i);
+      for (int j = 0; j < cols.Size(); j++)
+        if (cols[j] < (int)ndof && dof_map[cols[j]] >= 0)
+          cnt++;
+      els_per_row[dof_map[i]] = cnt;
+    }
+
+    auto reduced_mat = make_shared<SparseMatrix<double>>(els_per_row, (int)n_free);
+
     for (size_t i = 0; i < ndof; i++) {
       if (dof_map[i] < 0) continue;
       int row_reduced = dof_map[i];
-      auto cols = spm->GetRowIndices(i);
-      for (int j = 0; j < cols.Size(); j++) {
-        int c = cols[j];
+      auto src_cols = spm->GetRowIndices(i);
+      auto src_vals = spm->GetRowValues(i);
+      auto dst_cols = reduced_mat->GetRowIndices(row_reduced);
+      auto dst_vals = reduced_mat->GetRowValues(row_reduced);
+      int pos = 0;
+      for (int j = 0; j < src_cols.Size(); j++) {
+        int c = src_cols[j];
         if (c < (int)ndof && dof_map[c] >= 0) {
-          impl->ptr[row_reduced + 1]++;
+          dst_cols[pos] = dof_map[c];
+          dst_vals[pos] = src_vals[j];
+          pos++;
         }
       }
     }
 
-    // Prefix sum
-    for (size_t i = 0; i < n_free; i++) {
-      impl->ptr[i + 1] += impl->ptr[i];
-    }
+    // Wrap as NgsMatrix for AMGCL
+    NgsMatrix amgcl_mat;
+    amgcl_mat.ngs_mat = reduced_mat;
 
-    int nnz = impl->ptr[n_free];
-    impl->col.resize(nnz);
-    impl->val.resize(nnz);
-
-    // Second pass: fill column indices and values
-    std::vector<int> row_offset(n_free, 0);
-    for (size_t i = 0; i < ndof; i++) {
-      if (dof_map[i] < 0) continue;
-      int row_reduced = dof_map[i];
-      auto cols = spm->GetRowIndices(i);
-      auto vals = spm->GetRowValues(i);
-      for (int j = 0; j < cols.Size(); j++) {
-        int c = cols[j];
-        if (c < (int)ndof && dof_map[c] >= 0) {
-          int pos = impl->ptr[row_reduced] + row_offset[row_reduced];
-          impl->col[pos] = dof_map[c];
-          impl->val[pos] = vals[j];
-          row_offset[row_reduced]++;
-        }
-      }
-    }
-
-    // Create the AMGCL AMG based on options
+    // Create the AMGCL AMG — pass NgsMatrix directly, no CRS tuple needed
     if (opts.coarsening == "smoothed_aggregation" && opts.relaxation == "spai0") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::smoothed_aggregation,
-        amgcl::relaxation::spai0>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::spai0>>(amgcl_mat, opts);
     }
     else if (opts.coarsening == "smoothed_aggregation" && opts.relaxation == "gauss_seidel") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::smoothed_aggregation,
-        amgcl::relaxation::gauss_seidel>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::gauss_seidel>>(amgcl_mat, opts);
     }
     else if (opts.coarsening == "smoothed_aggregation" && opts.relaxation == "ilu0") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::smoothed_aggregation,
-        amgcl::relaxation::ilu0>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::ilu0>>(amgcl_mat, opts);
     }
     else if (opts.coarsening == "smoothed_aggregation" && opts.relaxation == "damped_jacobi") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::smoothed_aggregation,
-        amgcl::relaxation::damped_jacobi>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::damped_jacobi>>(amgcl_mat, opts);
     }
     else if (opts.coarsening == "ruge_stuben" && opts.relaxation == "spai0") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::ruge_stuben,
-        amgcl::relaxation::spai0>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::spai0>>(amgcl_mat, opts);
     }
     else if (opts.coarsening == "ruge_stuben" && opts.relaxation == "gauss_seidel") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::ruge_stuben,
-        amgcl::relaxation::gauss_seidel>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::gauss_seidel>>(amgcl_mat, opts);
     }
     else if (opts.coarsening == "ruge_stuben" && opts.relaxation == "ilu0") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::ruge_stuben,
-        amgcl::relaxation::ilu0>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::ilu0>>(amgcl_mat, opts);
     }
     else if (opts.coarsening == "ruge_stuben" && opts.relaxation == "damped_jacobi") {
       impl->amg = std::make_unique<AMGImpl<
         amgcl::coarsening::ruge_stuben,
-        amgcl::relaxation::damped_jacobi>>(
-          impl->n, impl->ptr, impl->col, impl->val, opts);
+        amgcl::relaxation::damped_jacobi>>(amgcl_mat, opts);
     }
     else {
       throw Exception("AMGCLMatrix: unsupported coarsening/relaxation combination: "
